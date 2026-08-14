@@ -11,12 +11,14 @@ Most oracle dashboards show you a number. This one shows you the evidence behind
 the number:
 
 - the value each independent node signed, side by side
-- how far apart those values are (usually zero, which is itself the story)
-- the address recovered from each signature, checked against RedStone's
-  official node list
+- which of those a consumer contract would actually use, and which get dropped
+- how far apart the nodes are, in basis points, over time
+- the exchanges each node aggregated, with bid, ask and volume
+- the address recovered from each signature, checked against RedStone's node
+  registry
 
-No API key. No backend. No tracking. The signer list ships inside the RedStone
-SDK, and signature recovery happens client side.
+No API key. No backend. No tracking. The registry ships inside the RedStone SDK,
+and signature recovery happens client side.
 
 ## Run it
 
@@ -44,16 +46,47 @@ Any static host works, since there is no server component.
 ## How it works
 
 `src/oracle.js` calls `requestDataPackages` from `@redstone-finance/sdk` against
-the `redstone-primary-prod` data service. Two details matter:
+the `redstone-primary-prod` data service. A few details matter:
 
+- **One request covers every feed on screen.** The gateway has no per-feed
+  route: `/v2/data-packages/latest/<service>` returns all 868 feeds whatever you
+  ask for, so asking feed by feed downloads the same payload once per feed per
+  gateway. All selected feeds go in a single `dataPackagesIds` array.
 - `authorizedSigners` is required, sourced from
-  `getSignersForDataServiceId(DATA_SERVICE_ID, true)`
-- `skipSignatureVerification: true` is needed because the gateway also returns
-  external fallback signers, which the SDK's internal check rejects
+  `getSignersForDataServiceId(DATA_SERVICE_ID, true)`.
+- `disableMedianSelection: true` keeps all five packages. By default the SDK
+  sorts by distance from the median and returns only the closest N — which ones
+  get dropped is part of what this page exists to show, so the ranking is
+  reproduced in `rankByMedianDistance` and displayed instead of applied.
+- `hideMetadata: false` adds the per-exchange breakdown. It roughly doubles the
+  response, so it sits behind a toggle.
+- Signature verification is **not** skipped. `skipSignatureVerification: true`
+  makes the SDK trust the `signerAddress` field the gateway sends instead of
+  recovering it from the signature, which is the opposite of the point.
 
-Verification is then done explicitly in the browser via `recoverSignerAddress`
-from `@redstone-finance/protocol`, and the recovered address is compared against
-the official list.
+Verification is then done again, visibly, in the browser via
+`recoverSignerAddress` from `@redstone-finance/protocol`, and the recovered
+address is compared against the registry.
+
+## Where the data comes from
+
+| what | source | network call |
+| --- | --- | --- |
+| prices and signatures | `oracle-gateway-{1,2}.a.redstone.finance` and `oracle-gateway-1.a.redstone.vip`, raced by the SDK | yes, every 15s |
+| the node registry | `registry/initial-state.json`, bundled in `@redstone-finance/sdk` | no |
+| feed catalogue | one plain read of a gateway at startup | once |
+| gateway health | a 29-byte read of each gateway's root | once |
+| chart history | live readings as they arrive, plus an optional hour seeded from the gateway's `/historical` route | on demand |
+
+The masthead reports **gateways answering N of 3** rather than assuming all three
+are up, because `oracle-gateway-1.a.redstone.vip` does not resolve from every
+network. The SDK races all three and takes the freshest reply, so the page keeps
+working on two — but it says so instead of hiding it.
+
+The gateways answer with `access-control-allow-origin: *` and need no key,
+account or allowlist. The historical route is served only by
+`oracle-gateway-2.a.redstone.finance` and `oracle-gateway-1.a.redstone.vip`, and
+keeps roughly a day — beyond about 36 hours it returns a gateway error.
 
 ## Notes
 
