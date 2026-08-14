@@ -94,6 +94,115 @@ body::before {
   font-weight: 500;
 }
 
+/* ---------- intro ---------- */
+
+.intro {
+  padding: 44px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.intro-head {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 500;
+  margin: 0 0 18px;
+}
+
+.intro-lede {
+  margin: 0 0 30px;
+  font-size: clamp(18px, 2.4vw, 23px);
+  line-height: 1.55;
+  font-weight: 300;
+  color: var(--paper);
+  max-width: 62ch;
+}
+
+.intro-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 30px;
+}
+
+.intro-steps li {
+  counter-increment: step;
+  position: relative;
+  padding-top: 34px;
+  font-size: 15px;
+  line-height: 1.62;
+  font-weight: 300;
+  color: var(--paper-dim);
+}
+
+.intro-steps li::before {
+  content: counter(step);
+  position: absolute;
+  top: 0;
+  left: 0;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--seal);
+  border-top: 1px solid var(--seal);
+  padding-top: 8px;
+  width: 100%;
+}
+
+.intro-steps b {
+  color: var(--paper);
+  font-weight: 500;
+}
+
+.intro-steps i {
+  font-style: italic;
+  color: var(--paper);
+}
+
+.intro-foot {
+  margin: 32px 0 0;
+  font-size: 16px;
+  line-height: 1.6;
+  font-weight: 300;
+  font-style: italic;
+  color: var(--muted);
+  max-width: 58ch;
+}
+
+/* ---------- logos ---------- */
+
+.logo {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  border-radius: 3px;
+  flex: none;
+  vertical-align: -3px;
+}
+
+.logo-blank {
+  display: inline-block;
+  background: rgba(242, 239, 233, 0.06);
+}
+
+.symbol-logo {
+  width: 20px;
+  height: 20px;
+  margin-right: 9px;
+}
+
+.source-logo {
+  width: 15px;
+  height: 15px;
+  margin-right: 8px;
+  vertical-align: -2px;
+}
+
 /* ---------- controls ---------- */
 
 .controls {
@@ -313,6 +422,41 @@ body::before {
   font-size: 11px;
   letter-spacing: 0.05em;
   color: var(--muted);
+}
+
+.chart-warning {
+  margin: 14px 0 0;
+  padding: 11px 14px;
+  border-left: 2px solid var(--seal);
+  background: rgba(228, 25, 57, 0.07);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--paper-dim);
+  max-width: 72ch;
+}
+
+/* ---------- on-chain ---------- */
+
+.onchain {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+
+.onchain-grid {
+  grid-template-columns: 130px 1fr auto;
+}
+
+.onchain-addr {
+  word-break: break-all;
+  color: var(--muted);
+}
+
+.onchain-rule {
+  color: var(--paper-dim);
+  text-align: right;
+  white-space: nowrap;
 }
 
 /* ---------- signer rows ---------- */
@@ -668,6 +812,10 @@ body::before {
   .chart-band-note { margin-left: 0; }
   .src-head, .src-row { grid-template-columns: 1fr auto auto; }
   .src-head span:nth-child(3), .src-row span:nth-child(3) { display: none; }
+  .onchain-grid { grid-template-columns: 1fr; row-gap: 3px; }
+  .onchain-grid span:nth-child(3) { display: block; }
+  .onchain-rule { text-align: left; white-space: normal; }
+  .intro-steps { gap: 26px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

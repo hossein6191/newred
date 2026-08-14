@@ -8,8 +8,14 @@ import {
   fetchCatalogue,
   fetchFeeds,
   fetchFeedsAt,
+  fetchOnChainDeployments,
+  fetchSourceLogoIndex,
+  fetchWeekHistory,
   formatAge,
+  formatDuration,
   probeGateways,
+  sourceLogoUrl,
+  symbolLogoCandidates,
   formatPrice,
   formatVolume,
   knownSigners,
@@ -53,6 +59,80 @@ async function copyText(text) {
   } catch {
     return false;
   }
+}
+
+/* ------------------------------------------------------------------- logo */
+
+/**
+ * RedStone files its logos under a lot of different extensions, and there is no
+ * manifest small enough to be worth downloading for the symbol set. So try each
+ * extension in turn and step aside quietly if none of them exist.
+ */
+function Logo({ candidates, alt, className = 'logo' }) {
+  const list = (Array.isArray(candidates) ? candidates : [candidates]).filter(Boolean);
+  const key = list.join('|');
+
+  // The progress is tracked against the url list itself rather than reset by an
+  // effect: the caller builds a fresh array every render, so an effect keyed on
+  // it would restart the image on every tick of the clock — and would retry a
+  // missing logo forever.
+  const [state, setState] = useState({ key, attempt: 0 });
+  const attempt = state.key === key ? state.attempt : 0;
+
+  if (!list.length || attempt >= list.length) {
+    return <span className={`${className} logo-blank`} aria-hidden="true" />;
+  }
+
+  return (
+    <img
+      className={className}
+      src={list[attempt]}
+      alt={alt}
+      onError={() => setState({ key, attempt: attempt + 1 })}
+    />
+  );
+}
+
+/* ------------------------------------------------------------------ intro */
+
+function Intro() {
+  return (
+    <section className="intro">
+      <h2 className="intro-head">What this page is</h2>
+      <p className="intro-lede">
+        RedStone is an oracle: it carries prices from the world's exchanges onto
+        blockchains, so that contracts handling real money know what things cost.
+        Five independent nodes each publish a price and sign it. This page is a
+        window into that machinery — it shows you the signatures, and lets you
+        check them yourself.
+      </p>
+      <ol className="intro-steps">
+        <li>
+          <b>Nodes read the market.</b> Each one polls dozens of exchanges,
+          aggregates what it finds, and signs the result with its own private
+          key. You can open any node here and see every exchange behind its
+          number, with the bid, the ask and the volume.
+        </li>
+        <li>
+          <b>The signature travels with the price.</b> That signature is the
+          proof the number came from that node and was not altered on the way.
+          Press <i>verify</i> and your browser recovers the signing address from
+          the signature and checks it against RedStone's public node registry.
+          Nothing is sent anywhere — the check happens on your machine.
+        </li>
+        <li>
+          <b>A contract picks a few and acts.</b> It does not take the first
+          signatures it sees; it takes the ones closest to the median and drops
+          the rest. The page marks which is which, and hands you the exact bytes
+          a contract would receive.
+        </li>
+      </ol>
+      <p className="intro-foot">
+        Almost every price dashboard asks you to take its word for it. The point
+        of this one is that you don't have to.
+      </p>
+    </section>
+  );
 }
 
 /* ------------------------------------------------------------------ chart */
@@ -112,11 +192,16 @@ function Sparkline({ points }) {
       change,
       dotX: x(last.t),
       dotY: y(last.median),
-      // Rounding a 40 second window to "0m" reads as broken.
+      // Rounding a 40 second window to "0m" reads as broken, and so does
+      // describing a week as 10020m.
       window:
         span < 90000
           ? `${Math.round(span / 1000)}s`
-          : `${Math.round(span / 60000)}m`,
+          : span < 5400000
+            ? `${Math.round(span / 60000)}m`
+            : span < 172800000
+              ? `${(span / 3600000).toFixed(1)}h`
+              : `${(span / 86400000).toFixed(1)}d`,
     };
   }, [points]);
 
@@ -128,6 +213,9 @@ function Sparkline({ points }) {
     );
   }
 
+  // The week-long series is a single price per hour with no node breakdown, so
+  // "they all agreed" would be a claim the data cannot support.
+  const unsigned = points.some((p) => p.unsigned);
   const worstBps = Math.max(...points.map((p) => p.spreadBps || 0));
 
   return (
@@ -161,7 +249,11 @@ function Sparkline({ points }) {
           </b>
         </span>
         <span className="chart-band-note">
-          {worstBps >= 0.005 ? (
+          {unsigned ? (
+            <>
+              per-node spread <b>not published at this range</b>
+            </>
+          ) : worstBps >= 0.005 ? (
             <>
               widest node disagreement <b>{worstBps.toFixed(2)} bps</b>
             </>
@@ -178,7 +270,7 @@ function Sparkline({ points }) {
 
 /* ----------------------------------------------------------------- sources */
 
-function SourceTable({ sources }) {
+function SourceTable({ sources, sourceLogos }) {
   if (!sources?.rows?.length) {
     return <p className="src-empty">this node published no source breakdown</p>;
   }
@@ -192,7 +284,14 @@ function SourceTable({ sources }) {
       </div>
       {sources.rows.map((r) => (
         <div className="src-row" key={r.name}>
-          <span className="src-name">{r.name}</span>
+          <span className="src-name">
+            <Logo
+              candidates={sourceLogoUrl(r.name, sourceLogos)}
+              alt=""
+              className="logo source-logo"
+            />
+            {r.name}
+          </span>
           <span>{formatPrice(r.bid)}</span>
           <span>{formatPrice(r.ask)}</span>
           <span className="src-vol">{formatVolume(r.volumeUsd)}</span>
@@ -211,7 +310,7 @@ function SourceTable({ sources }) {
 
 /* ------------------------------------------------------------------ signer */
 
-function Signer({ signer, median, count, node, showSources }) {
+function Signer({ signer, median, count, node, showSources, sourceLogos }) {
   const [open, setOpen] = useState(false);
 
   const delta =
@@ -267,7 +366,64 @@ function Signer({ signer, median, count, node, showSources }) {
               ? `${open ? 'hide' : 'show'} the ${signer.sources.rows.length} exchanges behind this number`
               : 'no source breakdown published'}
           </button>
-          {open && hasSources && <SourceTable sources={signer.sources} />}
+          {open && hasSources && (
+            <SourceTable sources={signer.sources} sourceLogos={sourceLogos} />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------- on-chain */
+
+/**
+ * The other half of the story. Everything above is a price sitting in a
+ * gateway; this is where that price is actually written on a blockchain, and
+ * the rule that decides when it gets rewritten.
+ */
+function OnChain({ deployments, feedId }) {
+  const [open, setOpen] = useState(false);
+  const rows = deployments?.[feedId];
+
+  if (!rows?.length) return null;
+
+  return (
+    <div className="onchain">
+      <button
+        className="src-toggle"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+      >
+        {open ? 'hide' : 'show'} where {feedId} is written on-chain —{' '}
+        {rows.length} {rows.length === 1 ? 'chain' : 'chains'}
+      </button>
+
+      {open && (
+        <div className="src">
+          <div className="src-head onchain-grid">
+            <span>chain</span>
+            <span>price feed contract</span>
+            <span>updates when</span>
+          </div>
+          {rows.map((r) => (
+            <div className="src-row onchain-grid" key={`${r.chain}-${r.address}`}>
+              <span className="src-name">{r.chain}</span>
+              <span className="onchain-addr">{r.address ?? '—'}</span>
+              <span className="onchain-rule">
+                {r.deviation !== null ? `moves ${r.deviation}%` : 'deviation unset'}
+                {r.heartbeatMs
+                  ? `, or ${formatDuration(r.heartbeatMs)} passes`
+                  : ''}
+              </span>
+            </div>
+          ))}
+          <p className="src-note">
+            A relayer watches the signed price and rewrites the contract only
+            when one of these thresholds is crossed. Between updates the number
+            on-chain sits still while the one above keeps moving — which is
+            exactly the gap an oracle exists to manage.
+          </p>
         </div>
       )}
     </div>
@@ -276,7 +432,19 @@ function Signer({ signer, median, count, node, showSources }) {
 
 /* -------------------------------------------------------------------- feed */
 
-function Feed({ feed, history, known, count, nodes, showSources, now }) {
+function Feed({
+  feed,
+  history,
+  weekHistory,
+  range,
+  deployments,
+  sourceLogos,
+  known,
+  count,
+  nodes,
+  showSources,
+  now,
+}) {
   const [verified, setVerified] = useState(false);
   const [copied, setCopied] = useState('');
 
@@ -323,6 +491,11 @@ function Feed({ feed, history, known, count, nodes, showSources, now }) {
       <div className="feed-head">
         <div>
           <p className="symbol">
+            <Logo
+              candidates={symbolLogoCandidates(feed.feedId)}
+              alt=""
+              className="logo symbol-logo"
+            />
             {feed.feedId}
             {FEED_LABELS[feed.feedId] ? ` · ${FEED_LABELS[feed.feedId]}` : ''}
           </p>
@@ -351,7 +524,15 @@ function Feed({ feed, history, known, count, nodes, showSources, now }) {
         </div>
       </div>
 
-      <Sparkline points={history ?? []} />
+      <Sparkline points={(range === 'week' ? weekHistory : history) ?? []} />
+
+      {range === 'week' && (
+        <p className="chart-warning">
+          This week-long line comes from RedStone's own dashboard API, not from
+          signed packages. It is here for shape and context — everything else on
+          this page carries a signature you can check, and this does not.
+        </p>
+      )}
 
       <div className="signers">
         {signers.map((s) => (
@@ -362,9 +543,12 @@ function Feed({ feed, history, known, count, nodes, showSources, now }) {
             count={count}
             node={nodeFor(s.address)}
             showSources={showSources}
+            sourceLogos={sourceLogos}
           />
         ))}
       </div>
+
+      <OnChain deployments={deployments} feedId={feed.feedId} />
 
       <div className="verify-bar">
         <button
@@ -510,6 +694,10 @@ export default function App() {
   const [count, setCount] = useState(3);
   const [showSources, setShowSources] = useState(false);
   const [seeding, setSeeding] = useState('');
+  const [range, setRange] = useState('live');
+  const [weekHistory, setWeekHistory] = useState({});
+  const [sourceLogos, setSourceLogos] = useState(null);
+  const [deployments, setDeployments] = useState({});
 
   const timer = useRef(null);
   const clock = useRef(null);
@@ -595,7 +783,25 @@ export default function App() {
     probeGateways()
       .then(setGateways)
       .catch(() => setGateways([]));
+    fetchSourceLogoIndex()
+      .then(setSourceLogos)
+      .catch(() => setSourceLogos({}));
+    fetchOnChainDeployments()
+      .then(setDeployments)
+      .catch(() => setDeployments({}));
   }, []);
+
+  // The week-long series is only worth fetching once someone asks to see it.
+  useEffect(() => {
+    if (range !== 'week') return;
+    const missing = selected.filter((id) => !weekHistory[id]);
+    if (!missing.length) return;
+    fetchWeekHistory(missing)
+      .then((series) => setWeekHistory((prev) => ({ ...prev, ...series })))
+      .catch(() => {
+        /* the line is a courtesy; the page works without it */
+      });
+  }, [range, selected, weekHistory]);
 
   useEffect(() => {
     try {
@@ -676,6 +882,8 @@ export default function App() {
         </div>
       </header>
 
+      <Intro />
+
       <div className="controls">
         <span className="tick">signatures a consumer takes</span>
         {[1, 3, 5].map((n) => (
@@ -691,6 +899,26 @@ export default function App() {
 
         <span className="divider" aria-hidden="true" />
 
+        <span className="tick">chart</span>
+        <button
+          className="chip"
+          aria-pressed={range === 'live'}
+          onClick={() => setRange('live')}
+          title="built from signed packages as they arrive"
+        >
+          signed
+        </button>
+        <button
+          className="chip"
+          aria-pressed={range === 'week'}
+          onClick={() => setRange('week')}
+          title="a week of hourly prices from RedStone's dashboard API — unsigned"
+        >
+          7 days
+        </button>
+
+        <span className="divider" aria-hidden="true" />
+
         <button
           className="chip"
           aria-pressed={showSources}
@@ -698,7 +926,14 @@ export default function App() {
         >
           exchange sources
         </button>
-        <button className="chip" onClick={seedHistory} disabled={Boolean(seeding) && seeding.startsWith('reading')}>
+        <button
+          className="chip"
+          onClick={seedHistory}
+          disabled={
+            range === 'week' || (Boolean(seeding) && seeding.startsWith('reading'))
+          }
+          title="fetch the last hour as signed packages"
+        >
           load the last hour
         </button>
 
@@ -752,6 +987,10 @@ export default function App() {
             key={f.feedId}
             feed={f}
             history={history[f.feedId]}
+            weekHistory={weekHistory[f.feedId]}
+            range={range}
+            deployments={deployments}
+            sourceLogos={sourceLogos}
             known={known}
             count={count}
             nodes={nodes}
@@ -763,6 +1002,15 @@ export default function App() {
       <Registry nodes={nodes} seenNow={seenNow} />
 
       <section className="explainer">
+        <div>
+          <h3>Where the numbers come from</h3>
+          <p>
+            Prices and signatures come from RedStone's public gateways. The node
+            registry, the exchange logos and the on-chain deployment rules come
+            from RedStone's own open repositories. Nothing here is scraped or
+            guessed, and no key was needed for any of it.
+          </p>
+        </div>
         <div>
           <h3>What a signature is</h3>
           <p>

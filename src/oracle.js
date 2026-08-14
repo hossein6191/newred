@@ -31,6 +31,149 @@ const HISTORICAL_GATEWAYS = [
 /** Historical timestamps must be a whole multiple of this. */
 export const HISTORICAL_STEP_MS = 10000;
 
+/**
+ * The API behind RedStone's own dashboard. It is not in their docs and not in
+ * the SDK — it was found by watching what app.redstone.finance calls. It serves
+ * a week of hourly prices with an open CORS header and no key.
+ *
+ * Treated as a courtesy, not a contract: nothing here breaks if it disappears,
+ * and the week-long line is labelled as unsigned wherever it is shown, because
+ * unlike everything else on the page it carries no signature to check.
+ */
+const APP_API = 'https://o40uhl5zq9.execute-api.us-east-1.amazonaws.com';
+
+/** Logos RedStone publishes for symbols and for the exchanges it reads. */
+const LOGO_BASE = 'https://cdn.jsdelivr.net/gh/redstone-finance/redstone-images@main';
+
+/** Extensions to try, best first — the repo mixes all of these. */
+export const LOGO_EXTENSIONS = ['svg', 'webp', 'png', 'jpg', 'jpeg'];
+
+export function symbolLogoCandidates(feedId) {
+  const base = String(feedId).split(/[\/_-]/)[0].toLowerCase();
+  if (!base) return [];
+  return LOGO_EXTENSIONS.map((ext) => `${LOGO_BASE}/symbols/${base}.${ext}`);
+}
+
+export function sourceLogoUrl(sourceName, index) {
+  if (!index) return null;
+  const name = String(sourceName).toLowerCase();
+  // Source ids look like "binance-usdt" or "kraken-eur"; the logo is filed
+  // under the venue alone. Try the whole name first in case it isn't.
+  const candidates = [name, name.replace(/-(usdt|usdc|usd|eur|btc|eth)$/, ''), name.split('-')[0]];
+  for (const c of candidates) {
+    if (index[c]) return `${LOGO_BASE}/sources/${index[c]}`;
+  }
+  return null;
+}
+
+/** The 108 exchange logo filenames, fetched once so extensions are known. */
+export async function fetchSourceLogoIndex() {
+  const r = await fetch(
+    'https://api.github.com/repos/redstone-finance/redstone-images/contents/sources'
+  );
+  if (!r.ok) throw new Error(`logo index responded ${r.status}`);
+  const body = await r.json();
+  const index = {};
+  for (const f of body) {
+    if (f.type !== 'file') continue;
+    index[f.name.replace(/\.[^.]+$/, '').toLowerCase()] = f.name;
+  }
+  return index;
+}
+
+/**
+ * A week of hourly prices for several feeds in one call. These are plain
+ * numbers with no signatures attached — see the note on APP_API.
+ */
+export async function fetchWeekHistory(feedIds) {
+  if (!feedIds.length) return {};
+  const url = `${APP_API}/prices/pull/many-historical?symbols=${encodeURIComponent(
+    feedIds.join(',')
+  )}`;
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`history responded ${r.status}`);
+  const body = await r.json();
+  const prices = body?.data?.prices ?? {};
+
+  const out = {};
+  for (const [feedId, points] of Object.entries(prices)) {
+    if (!Array.isArray(points)) continue;
+    const series = points
+      .map((p) => ({
+        t: Number(p.timestamp),
+        median: Number(p.value),
+        min: Number(p.value),
+        max: Number(p.value),
+        spreadBps: 0,
+        unsigned: true,
+      }))
+      .filter((p) => Number.isFinite(p.t) && Number.isFinite(p.median))
+      .sort((a, b) => a.t - b.t);
+    if (series.length) out[feedId] = series;
+  }
+  return out;
+}
+
+const RELAYER_BASE =
+  'https://raw.githubusercontent.com/redstone-finance/redstone-oracles-monorepo/main/packages/relayer-remote-config/main/relayer-manifests-multi-feed';
+
+/**
+ * The chains RedStone runs a relayer on. Fifty mainnet manifests exist; these
+ * are the ones worth fetching on a page that has to stay light.
+ */
+const RELAYER_CHAINS = [
+  ['ethereumMultiFeed', 'Ethereum'],
+  ['arbitrumOneMultiFeed', 'Arbitrum'],
+  ['baseMultiFeed', 'Base'],
+  ['optimismMultiFeed', 'Optimism'],
+  ['avalancheMultiFeed', 'Avalanche'],
+  ['bnbMultiFeed', 'BNB Chain'],
+  ['polygonMultiFeed', 'Polygon'],
+  ['lineaMultiFeed', 'Linea'],
+  ['scrollMultiFeed', 'Scroll'],
+  ['mantleMultiFeed', 'Mantle'],
+  ['zksyncMultiFeed', 'zkSync'],
+  ['berachainMultiFeed', 'Berachain'],
+];
+
+/**
+ * Where each feed actually lives on-chain, and the rule that decides when it
+ * gets rewritten: a price moves on-chain when it drifts past the deviation
+ * threshold, or when the heartbeat runs out — whichever comes first.
+ */
+export async function fetchOnChainDeployments() {
+  const results = await Promise.all(
+    RELAYER_CHAINS.map(async ([file, label]) => {
+      try {
+        const r = await fetch(`${RELAYER_BASE}/${file}.json`);
+        if (!r.ok) return null;
+        return { manifest: await r.json(), label };
+      } catch {
+        return null;
+      }
+    })
+  );
+
+  const byFeed = {};
+  for (const entry of results) {
+    if (!entry?.manifest?.priceFeeds) continue;
+    const { manifest, label } = entry;
+    const base = manifest.updateTriggers ?? {};
+
+    for (const [feedId, feed] of Object.entries(manifest.priceFeeds)) {
+      const triggers = { ...base, ...(feed.updateTriggersOverrides ?? {}) };
+      (byFeed[feedId] ??= []).push({
+        chain: label,
+        chainId: manifest.chain?.id ?? null,
+        address: feed.priceFeedAddress ?? null,
+        deviation: triggers.deviationPercentage ?? null,
+        heartbeatMs: triggers.timeSinceLastUpdateInMilliseconds ?? null,
+      });
+    }
+  }
+  return byFeed;
+}
+
 /** Feeds the page opens with. Everything else is one search away. */
 export const DEFAULT_FEEDS = ['ETH', 'BTC', 'XAU'];
 
@@ -393,6 +536,14 @@ export function formatVolume(v) {
   if (v >= 1e6) return `$${(v / 1e6).toFixed(1)}m`;
   if (v >= 1e3) return `$${(v / 1e3).toFixed(0)}k`;
   return `$${v.toFixed(0)}`;
+}
+
+export function formatDuration(ms) {
+  if (!Number.isFinite(ms)) return '—';
+  const h = ms / 3600000;
+  if (h >= 24 && h % 24 === 0) return `${h / 24}d`;
+  if (h >= 1) return `${Number.isInteger(h) ? h : h.toFixed(1)}h`;
+  return `${Math.round(ms / 60000)}m`;
 }
 
 export function formatAge(ms) {

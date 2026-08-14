@@ -77,6 +77,9 @@ address is compared against the registry.
 | feed catalogue | one plain read of a gateway at startup | once |
 | gateway health | a 29-byte read of each gateway's root | once |
 | chart history | live readings as they arrive, plus an optional hour seeded from the gateway's `/historical` route | on demand |
+| week-long chart | `o40uhl5zq9.execute-api.us-east-1.amazonaws.com/prices/pull/many-historical` | on demand |
+| on-chain deployments | `relayer-remote-config` manifests in the RedStone monorepo | once |
+| logos | `redstone-images` via jsDelivr | per icon |
 
 The masthead reports **gateways answering N of 3** rather than assuming all three
 are up, because `oracle-gateway-1.a.redstone.vip` does not resolve from every
@@ -87,6 +90,24 @@ The gateways answer with `access-control-allow-origin: *` and need no key,
 account or allowlist. The historical route is served only by
 `oracle-gateway-2.a.redstone.finance` and `oracle-gateway-1.a.redstone.vip`, and
 keeps roughly a day — beyond about 36 hours it returns a gateway error.
+
+## Two things worth knowing before relying on this
+
+**The all-feeds and metadata routes are meant to need a key.** RedStone's own
+gateway source (`packages/cache-service/.../base-data-packages.controller.ts`)
+guards them with `validateAllFeedsAccess` and `validateMetadataAccess`, both of
+which demand an admin API key — the check is skipped only because the key regex
+is unset in the deployed config. The feed catalogue and the exchange breakdown
+here both ride on those routes. If the key is ever switched on, those two
+features stop and the rest of the page carries on.
+
+A per-feed route, `latest-by-data-feeds/<service>?dataFeedIds=…`, already exists
+in `main` and is the intended public path, but is not deployed on either
+production gateway yet. When it lands it should replace the all-feeds call.
+
+**The week-long chart is unsigned.** It comes from the undocumented API behind
+RedStone's own dashboard, not from signed data packages. It is labelled as such
+in the interface, and the page works without it.
 
 ## Notes
 
