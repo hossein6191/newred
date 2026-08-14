@@ -16,3 +16,6 @@ dist/
 
 # local tooling
 .claude/
+
+# vite dependency cache
+.vite/
