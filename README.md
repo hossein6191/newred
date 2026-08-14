@@ -1,7 +1,7 @@
 # Proof of Price
 
-**[proof-of-price.vercel.app](https://newred.vercel.app)** — search RedStone's
-oracle, signature by signature.
+**[proofofprice.vercel.app](https://proofofprice.vercel.app)** — search
+RedStone's oracle, signature by signature.
 
 Every price RedStone publishes is signed by five independent nodes before it
 reaches a blockchain. Those signatures are what make the price trustworthy, and
