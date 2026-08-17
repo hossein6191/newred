@@ -335,6 +335,82 @@ sub(
     'stats strip markup',
 )
 
+# --------------------------------------------------- registry: source + cache
+
+sub(
+    "const REGISTRY = 'https://raw.githubusercontent.com/redstone-finance/redstone-oracles-monorepo/main/packages/sdk/src/registry/initial-state.json';",
+    "/* Read from the published SDK package over a CDN, not from a raw GitHub file.\n"
+    "   raw.githubusercontent.com rate-limits anonymous traffic, and a 429 here used\n"
+    "   to label every one of the five nodes 'not in registry' — the page accusing\n"
+    "   honest signers because it could not read the list it checks them against. */\n"
+    "const REGISTRY = 'https://cdn.jsdelivr.net/npm/@redstone-finance/sdk/dist/src/registry/initial-state.json';\n"
+    "const REGISTRY_KEY = 'pop.registry.v1';",
+    'registry source',
+)
+
+sub(
+    "  ['raw.githubusercontent.com', REGISTRY, 'Node registry · the names beside each signer'],",
+    "  ['cdn.jsdelivr.net · sdk', REGISTRY, 'Node registry · the names beside each signer'],",
+    'hosts table row',
+)
+
+sub(
+    "  async loadRegistry(){\n"
+    "    try {\n"
+    "      const r = await fetch(REGISTRY);\n"
+    "      const j = await r.json();\n"
+    "      const map = {};\n"
+    "      for(const n of Object.values(j.nodes || {})){\n"
+    "        if(n.dataServiceId !== 'redstone-primary-prod') continue;\n"
+    "        map[String(n.evmAddress).toLowerCase()] = String(n.name || '').replace('redstone-primary-prod-','') || 'unnamed';\n"
+    "      }\n"
+    "      this.nodeNames = map;\n"
+    "      if(this.alive) this.paintSigners();\n"
+    "    } catch(e){ /* addresses still show, just without their names */ }\n"
+    "  }",
+    "  async loadRegistry(){\n"
+    "    const use = (map) => {\n"
+    "      if(!map || !Object.keys(map).length) return false;\n"
+    "      this.nodeNames = map;\n"
+    "      if(this.alive) this.paintSigners();\n"
+    "      return true;\n"
+    "    };\n"
+    "    /* Show the cached names first. The list changes a few times a year, so a\n"
+    "       slow or refusing CDN should never blank out names already known. */\n"
+    "    try { use(JSON.parse(localStorage.getItem(REGISTRY_KEY) || 'null')); } catch(e){}\n"
+    "    try {\n"
+    "      const r = await fetch(REGISTRY);\n"
+    "      if(!r.ok) throw new Error('HTTP ' + r.status);\n"
+    "      const j = await r.json();\n"
+    "      const map = {};\n"
+    "      for(const n of Object.values(j.nodes || {})){\n"
+    "        if(n.dataServiceId !== 'redstone-primary-prod') continue;\n"
+    "        map[String(n.evmAddress).toLowerCase()] = String(n.name || '').replace('redstone-primary-prod-','') || 'unnamed';\n"
+    "      }\n"
+    "      if(use(map)){\n"
+    "        try { localStorage.setItem(REGISTRY_KEY, JSON.stringify(map)); } catch(e){}\n"
+    "      }\n"
+    "    } catch(e){ /* whatever was cached stays on screen */ }\n"
+    "  }",
+    'loadRegistry: cache + fail soft',
+)
+
+sub(
+    "  nameFor(addr){\n"
+    "    const n = this.nodeNames && this.nodeNames[String(addr).toLowerCase()];\n"
+    "    return n ? n + ' \\u2713' : 'not in registry';\n"
+    "  }",
+    "  nameFor(addr){\n"
+    "    /* Not knowing a name and knowing the name is wrong are different claims.\n"
+    "       Only say a signer is missing from the registry once the registry has\n"
+    "       actually been read. */\n"
+    "    if(!this.nodeNames) return 'registry unavailable';\n"
+    "    const n = this.nodeNames[String(addr).toLowerCase()];\n"
+    "    return n ? n + ' \\u2713' : 'not in registry';\n"
+    "  }",
+    'nameFor: no false accusation',
+)
+
 # ------------------------------------------------------------------- write
 
 print(f'\ntemplate grew {len(original)} -> {len(template)} chars')
