@@ -293,7 +293,10 @@ sub(
     "        : sp.sinceMs >= 3600000\n"
     "          ? Math.round(sp.sinceMs/3600000) + 'h'\n"
     "          : Math.max(1, Math.round(sp.sinceMs/60000)) + 'm';\n"
-    "      set('pop-stat-obs', sp.n + ' signed · ' + span);\n"
+    "      /* \"2h of 24h\" rather than \"2h\": the price range covers the whole window\n"
+    "         because the API serves it, but the gap can only cover the part this\n"
+    "         browser was open for, and the two are easy to confuse otherwise. */\n"
+    "      set('pop-stat-obs', span + ' of ' + tag.toLowerCase() + ' · ' + sp.n + ' signed');\n"
     "    } else {\n"
     "      set('pop-stat-gap', '—');\n"
     "      set('pop-stat-obs', 'watching…');\n"
@@ -373,7 +376,7 @@ STATS_HTML = (
     '<div id="pop-stat-gap" style="font-family:\'Roboto Mono\',monospace;font-size:12px;color:#FFE3E3;margin-top:6px;font-variant-numeric:tabular-nums">—</div>'
     '</div>'
     '<div style="background:#290004;padding:11px 13px">'
-    '<div style="font-family:\'Roboto Mono\',monospace;font-size:9px;letter-spacing:0.12em;color:#D1707F;white-space:nowrap">WATCHED BY YOU</div>'
+    '<div style="font-family:\'Roboto Mono\',monospace;font-size:9px;letter-spacing:0.12em;color:#D1707F;white-space:nowrap">GAP MEASURED OVER</div>'
     '<div id="pop-stat-obs" style="font-family:\'Roboto Mono\',monospace;font-size:12px;color:#FFE3E3;margin-top:6px;font-variant-numeric:tabular-nums">—</div>'
     '</div>'
     '</div>'
