@@ -45,6 +45,22 @@ it that way.
 
 `react-app/` holds an earlier Vite build of the same idea. It is not deployed.
 
+## If you re-export `index.html`
+
+The page is generated, but a few fixes were made by hand afterwards: falling
+back to a second gateway when the first does not answer, the 24-hour and 7-day
+range panel, and remembering how far apart the nodes have been across reloads.
+
+Re-exporting overwrites all of that. To put it back:
+
+```bash
+python3 tools/apply-fixes.py index.html
+```
+
+The script refuses to run rather than half-apply itself: every edit is anchored
+to an exact snippet, and a missing or ambiguous anchor stops it with the name of
+the edit that no longer fits.
+
 ## Notes
 
 Not affiliated with RedStone. Prices are shown for inspection, not for trading.
