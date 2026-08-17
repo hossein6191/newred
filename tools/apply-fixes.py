@@ -42,7 +42,8 @@ sub(
     "];\n"
     "const GW_TIMEOUT_MS = 5000;\n"
     "const RETRY_MS = 3000;\n"
-    "const SPREAD_KEY = 'pop.spread.v1';",
+    "const SPREAD_KEY = 'pop.spread.v2';\n"
+    "const SPREAD_KEEP_H = 24*7;",
     'gateway list',
 )
 
@@ -116,25 +117,58 @@ sub(
     "    }\n"
     "    if(!this.alive) return;\n"
     "    this.nextAt = Date.now() + POLL_MS;",
-    "  /* ---------- how far apart the nodes have been, kept across reloads ---- */\n"
+    "  /* ---------- how far apart the nodes have been, kept across reloads ----\n"
+    "     Bucketed by hour so the same window the chart uses can be applied to it.\n"
+    "     Keeping every fifteen-second sample would be forty thousand numbers a\n"
+    "     week per feed; one bucket an hour is a hundred and sixty-eight. */\n"
     "  loadSpreadMemory(){\n"
     "    try {\n"
     "      const raw = localStorage.getItem(SPREAD_KEY);\n"
     "      this.spreadMem = raw ? JSON.parse(raw) : {};\n"
     "    } catch(e){ this.spreadMem = {}; }\n"
     "    if(!this.spreadMem || typeof this.spreadMem !== 'object') this.spreadMem = {};\n"
+    "    this.pruneSpread();\n"
+    "  }\n"
+    "  pruneSpread(){\n"
+    "    const oldest = Math.floor(Date.now()/3600000) - SPREAD_KEEP_H;\n"
+    "    for(const sym of Object.keys(this.spreadMem)){\n"
+    "      const b = this.spreadMem[sym];\n"
+    "      if(!b || typeof b !== 'object'){ delete this.spreadMem[sym]; continue; }\n"
+    "      for(const h of Object.keys(b)) if(Number(h) < oldest) delete b[h];\n"
+    "      if(!Object.keys(b).length) delete this.spreadMem[sym];\n"
+    "    }\n"
     "  }\n"
     "  noteSpread(sym, bps){\n"
     "    if(!Number.isFinite(bps)) return;\n"
-    "    const m = this.spreadMem[sym] || {max:0, sum:0, n:0, since:Date.now()};\n"
-    "    m.max = Math.max(m.max, bps);\n"
-    "    m.sum += bps;\n"
-    "    m.n += 1;\n"
-    "    this.spreadMem[sym] = m;\n"
+    "    const hour = Math.floor(Date.now()/3600000);\n"
+    "    const buckets = this.spreadMem[sym] || (this.spreadMem[sym] = {});\n"
+    "    const b = buckets[hour] || (buckets[hour] = {max:0, n:0});\n"
+    "    b.max = Math.max(b.max, bps);\n"
+    "    b.n += 1;\n"
     "    clearTimeout(this._spreadSave);\n"
     "    this._spreadSave = setTimeout(() => {\n"
+    "      this.pruneSpread();\n"
     "      try { localStorage.setItem(SPREAD_KEY, JSON.stringify(this.spreadMem)); } catch(e){}\n"
     "    }, 1200);\n"
+    "  }\n"
+    "  /* What the nodes did inside the window the tabs select, and how much of\n"
+    "     that window was actually watched — the two are rarely the same. */\n"
+    "  spreadOver(sym, hours){\n"
+    "    const buckets = this.spreadMem && this.spreadMem[sym];\n"
+    "    if(!buckets) return null;\n"
+    "    const now = Math.floor(Date.now()/3600000);\n"
+    "    const from = now - hours + 1;\n"
+    "    let max = 0, n = 0, first = null;\n"
+    "    for(const key of Object.keys(buckets)){\n"
+    "      const h = Number(key);\n"
+    "      if(h < from || h > now) continue;\n"
+    "      const b = buckets[key];\n"
+    "      max = Math.max(max, b.max);\n"
+    "      n += b.n;\n"
+    "      if(first === null || h < first) first = h;\n"
+    "    }\n"
+    "    if(!n) return null;\n"
+    "    return {max, n, sinceMs: (now - first + 1) * 3600000};\n"
     "  }\n"
     "\n"
     "  /* ---------- live poll: automatic, every 15s ---------- */\n"
@@ -222,6 +256,13 @@ sub(
     "  paintStats(){\n"
     "    const sym = this.selected;\n"
     "    const hours = this.range === '24H' ? 24 : 24*7;\n"
+    "    const tag = this.range === '24H' ? '24H' : '7D';\n"
+    "    /* Both labels carry the window. Four numbers in a row that quietly meant\n"
+    "       different periods was the thing that read as wrong. */\n"
+    "    const rl = document.getElementById('pop-stat-range-label');\n"
+    "    if(rl) rl.textContent = tag + ' RANGE';\n"
+    "    const gl = document.getElementById('pop-stat-gap-label');\n"
+    "    if(gl) gl.textContent = 'WIDEST GAP · ' + tag;\n"
     "    const st = rangeStats(this.hist[sym], hours);\n"
     "    const set = (id, text, colour) => {\n"
     "      const el = document.getElementById(id);\n"
@@ -242,10 +283,17 @@ sub(
     "      set('pop-stat-change', '—', '#FFE3E3');\n"
     "    }\n"
     "\n"
-    "    const m = this.spreadMem && this.spreadMem[sym];\n"
-    "    if(m && m.n){\n"
-    "      set('pop-stat-gap', m.max.toFixed(2) + ' bps');\n"
-    "      set('pop-stat-obs', m.n + (m.n === 1 ? ' reading' : ' readings'));\n"
+    "    /* Measured over the same window as the three cells to its left, so the\n"
+    "       whole strip describes one period instead of four plus forever. */\n"
+    "    const sp = this.spreadOver(sym, hours);\n"
+    "    if(sp){\n"
+    "      set('pop-stat-gap', sp.max.toFixed(2) + ' bps');\n"
+    "      const span = sp.sinceMs >= 48*3600000\n"
+    "        ? Math.round(sp.sinceMs/86400000) + 'd'\n"
+    "        : sp.sinceMs >= 3600000\n"
+    "          ? Math.round(sp.sinceMs/3600000) + 'h'\n"
+    "          : Math.max(1, Math.round(sp.sinceMs/60000)) + 'm';\n"
+    "      set('pop-stat-obs', sp.n + ' signed · ' + span);\n"
     "    } else {\n"
     "      set('pop-stat-gap', '—');\n"
     "      set('pop-stat-obs', 'watching…');\n"
@@ -304,11 +352,13 @@ sub(
 # ------------------------------------------------------------------ markup
 
 STATS_HTML = (
-    '<div id="pop-stats" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));'
+    # The range cell holds two full prices and needs about twice the room of a
+    # percentage; giving every cell the same minimum truncated it to "1,859.97 – 1…".
+    '<div id="pop-stats" style="display:grid;grid-template-columns:minmax(178px,1.6fr) repeat(4,minmax(104px,1fr));'
     'gap:1px;background:#4C0912;margin:0 clamp(16px,2vw,26px) 16px;border:1px solid #4C0912">'
     '<div style="background:#290004;padding:11px 13px">'
-    '<div style="font-family:\'Roboto Mono\',monospace;font-size:9px;letter-spacing:0.12em;color:#D1707F;white-space:nowrap">RANGE</div>'
-    '<div id="pop-stat-range" style="font-family:\'Roboto Mono\',monospace;font-size:12px;color:#FFE3E3;margin-top:6px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">—</div>'
+    '<div id="pop-stat-range-label" style="font-family:\'Roboto Mono\',monospace;font-size:9px;letter-spacing:0.12em;color:#D1707F;white-space:nowrap">RANGE</div>'
+    '<div id="pop-stat-range" style="font-family:\'Roboto Mono\',monospace;font-size:12px;color:#FFE3E3;margin-top:6px;font-variant-numeric:tabular-nums;white-space:nowrap">—</div>'
     '</div>'
     '<div style="background:#290004;padding:11px 13px">'
     '<div style="font-family:\'Roboto Mono\',monospace;font-size:9px;letter-spacing:0.12em;color:#D1707F;white-space:nowrap">HIGH TO LOW</div>'
@@ -319,11 +369,11 @@ STATS_HTML = (
     '<div id="pop-stat-change" style="font-family:\'Roboto Mono\',monospace;font-size:12px;color:#FFE3E3;margin-top:6px;font-variant-numeric:tabular-nums">—</div>'
     '</div>'
     '<div style="background:#290004;padding:11px 13px">'
-    '<div style="font-family:\'Roboto Mono\',monospace;font-size:9px;letter-spacing:0.12em;color:#D1707F;white-space:nowrap">WIDEST NODE GAP</div>'
+    '<div id="pop-stat-gap-label" style="font-family:\'Roboto Mono\',monospace;font-size:9px;letter-spacing:0.12em;color:#D1707F;white-space:nowrap">WIDEST NODE GAP</div>'
     '<div id="pop-stat-gap" style="font-family:\'Roboto Mono\',monospace;font-size:12px;color:#FFE3E3;margin-top:6px;font-variant-numeric:tabular-nums">—</div>'
     '</div>'
     '<div style="background:#290004;padding:11px 13px">'
-    '<div style="font-family:\'Roboto Mono\',monospace;font-size:9px;letter-spacing:0.12em;color:#D1707F;white-space:nowrap">SIGNED READINGS</div>'
+    '<div style="font-family:\'Roboto Mono\',monospace;font-size:9px;letter-spacing:0.12em;color:#D1707F;white-space:nowrap">WATCHED BY YOU</div>'
     '<div id="pop-stat-obs" style="font-family:\'Roboto Mono\',monospace;font-size:12px;color:#FFE3E3;margin-top:6px;font-variant-numeric:tabular-nums">—</div>'
     '</div>'
     '</div>'
