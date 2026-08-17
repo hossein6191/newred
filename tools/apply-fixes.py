@@ -43,7 +43,14 @@ sub(
     "const GW_TIMEOUT_MS = 5000;\n"
     "const RETRY_MS = 3000;\n"
     "const SPREAD_KEY = 'pop.spread.v2';\n"
-    "const SPREAD_KEEP_H = 24*7;",
+    "const SPREAD_KEEP_H = 24*7;\n"
+    "/* Past packages come with every node's signature attached, so a real gap can\n"
+    "   be measured rather than only watched. Only gateway 2 serves this route, and\n"
+    "   only for about a day: 24h back answers, 28h back returns 513. */\n"
+    "const HIST_GW = 'https://oracle-gateway-2.a.redstone.finance/v2/data-packages/historical/redstone-primary-prod/';\n"
+    "const SCAN_KEY = 'pop.scan24.v1';\n"
+    "const SCAN_STEP_MS = 3*3600000;\n"
+    "const SCAN_POINTS = 9;",
     'gateway list',
 )
 
@@ -151,6 +158,80 @@ sub(
     "      try { localStorage.setItem(SPREAD_KEY, JSON.stringify(this.spreadMem)); } catch(e){}\n"
     "    }, 1200);\n"
     "  }\n"
+    "  /* ---------- the real gap over the last day ----------------------------\n"
+    "     Watching gives the gap only for the minutes a browser happened to be\n"
+    "     open. The gateway keeps a day of past packages, each still carrying all\n"
+    "     five signatures, so the gap over that day can be measured instead.\n"
+    "     Sampled, not exhaustive: every sample is a few hundred kilobytes, so\n"
+    "     this asks nine times across the day and says that it did. */\n"
+    "  loadScans(){\n"
+    "    try { this.scans = JSON.parse(localStorage.getItem(SCAN_KEY) || '{}') || {}; }\n"
+    "    catch(e){ this.scans = {}; }\n"
+    "  }\n"
+    "  async scan24h(sym){\n"
+    "    if(this.scanning) return;\n"
+    "    this.scanning = true;\n"
+    "    const out = document.getElementById('pop-scan-out');\n"
+    "    const btn = document.getElementById('pop-scan-btn');\n"
+    "    if(btn){ btn.disabled = true; btn.textContent = 'MEASURING'; }\n"
+    "    let best = null, first = null, last = null, taken = 0;\n"
+    "    for(let i = SCAN_POINTS - 1; i >= 0; i--){\n"
+    "      if(!this.alive) break;\n"
+    "      if(out) out.textContent = 'sampling ' + (SCAN_POINTS - i) + ' of ' + SCAN_POINTS + '…';\n"
+    "      const stamp = Math.floor((Date.now() - i*SCAN_STEP_MS)/10000)*10000;\n"
+    "      try {\n"
+    "        const r = await fetch(HIST_GW + stamp);\n"
+    "        if(!r.ok) throw new Error('HTTP ' + r.status);\n"
+    "        const body = await r.json();\n"
+    "        const pkgs = body && body[sym];\n"
+    "        if(!Array.isArray(pkgs) || pkgs.length < 2) continue;\n"
+    "        const vals = pkgs\n"
+    "          .map(p => Number(p.dataPoints && p.dataPoints[0] && p.dataPoints[0].value))\n"
+    "          .filter(Number.isFinite);\n"
+    "        if(vals.length < 2) continue;\n"
+    "        const med = median(vals);\n"
+    "        const bps = med ? ((Math.max(...vals) - Math.min(...vals))/med)*10000 : 0;\n"
+    "        const at = pkgs[0].timestampMilliseconds || stamp;\n"
+    "        if(first === null) first = at;\n"
+    "        last = at;\n"
+    "        taken++;\n"
+    "        if(!best || bps > best.bps) best = {bps, at, nodes: vals.length};\n"
+    "      } catch(e){ /* a gap in the record is not a failure of the page */ }\n"
+    "    }\n"
+    "    this.scanning = false;\n"
+    "    if(btn){ btn.disabled = false; btn.textContent = 'MEASURE AGAIN'; }\n"
+    "    if(!this.alive) return;\n"
+    "    if(best && taken){\n"
+    "      this.scans[sym] = {bps: best.bps, at: best.at, from: first, to: last, taken, when: Date.now()};\n"
+    "      try { localStorage.setItem(SCAN_KEY, JSON.stringify(this.scans)); } catch(e){}\n"
+    "    } else if(out){\n"
+    "      out.textContent = 'the gateway returned no past packages for ' + sym;\n"
+    "      return;\n"
+    "    }\n"
+    "    this.paintScan();\n"
+    "  }\n"
+    "  paintScan(){\n"
+    "    const sym = this.selected;\n"
+    "    const out = document.getElementById('pop-scan-out');\n"
+    "    const btn = document.getElementById('pop-scan-btn');\n"
+    "    if(!out) return;\n"
+    "    if(this.scanning) return;\n"
+    "    const s = this.scans && this.scans[sym];\n"
+    "    if(btn) btn.textContent = s ? 'MEASURE AGAIN' : 'MEASURE';\n"
+    "    if(!s){\n"
+    "      out.textContent = 'not measured yet — ' + SCAN_POINTS + ' samples across the last 24 hours';\n"
+    "      return;\n"
+    "    }\n"
+    "    const stamp = (ms) => {\n"
+    "      const d = new Date(ms);\n"
+    "      return d.toISOString().slice(5,10).replace('-','/') + ' ' + d.toISOString().slice(11,16);\n"
+    "    };\n"
+    "    out.innerHTML =\n"
+    "      '<b style=\"color:#FFE3E3;font-weight:500\">' + s.bps.toFixed(2) + ' bps</b>' +\n"
+    "      ' widest of ' + s.taken + ' samples · ' + stamp(s.from) + ' → ' + stamp(s.to) + ' UTC' +\n"
+    "      ' · worst at ' + stamp(s.at);\n"
+    "  }\n"
+    "\n"
     "  /* What the nodes did inside the window the tabs select, and how much of\n"
     "     that window was actually watched — the two are rarely the same. */\n"
     "  spreadOver(sym, hours){\n"
@@ -226,9 +307,22 @@ sub(
     "    this.loadRegistry();\n"
     "    this.probeHosts();",
     "    this.loadSpreadMemory();\n"
+    "    this.loadScans();\n"
+    "    this.scanButton();\n"
     "    this.loadRegistry();\n"
     "    this.probeHosts();",
     'boot: load spread memory',
+)
+
+sub(
+    "  rangeTabs(){\n",
+    "  scanButton(){\n"
+    "    const btn = document.getElementById('pop-scan-btn');\n"
+    "    if(btn) btn.addEventListener('click', () => this.scan24h(this.selected));\n"
+    "    this.paintScan();\n"
+    "  }\n"
+    "  rangeTabs(){\n",
+    'wire the measure button',
 )
 
 # -------------------------------------------------------------- stats paint
@@ -374,6 +468,34 @@ STATS_HTML = (
     '<div id="pop-stat-change" style="font-family:\'Roboto Mono\',monospace;font-size:clamp(10px,1.05vw,12px);color:#FFE3E3;margin-top:6px;font-variant-numeric:tabular-nums">—</div>'
     '</div>'
     '</div>'
+    # Each period gets its own line, and each says where its number comes from.
+    # The two are not the same kind of measurement and should not look alike.
+    '<div style="margin:0 clamp(16px,2vw,26px) 16px;border:1px solid #4C0912">'
+    '<div style="display:flex;align-items:center;gap:12px;padding:11px 13px;border-bottom:1px solid #3A060D;flex-wrap:wrap">'
+    '<div style="min-width:0;flex:1 1 240px">'
+    '<div style="font-family:\'Roboto Mono\',monospace;font-size:9px;letter-spacing:0.12em;color:#D1707F">WIDEST NODE GAP · LAST 24H · SIGNED</div>'
+    '<div id="pop-scan-out" style="font-family:\'Roboto Mono\',monospace;font-size:10.5px;color:#D1707F;margin-top:6px;line-height:1.5">not measured yet</div>'
+    '</div>'
+    '<button id="pop-scan-btn" type="button" style="background:#AE0822;color:#FFE3E3;border:1px solid #AE0822;'
+    'font-family:\'Roboto Mono\',monospace;font-size:10px;letter-spacing:0.1em;padding:8px 14px;cursor:pointer;flex:0 0 auto">MEASURE</button>'
+    '</div>'
+    '<div style="padding:11px 13px;border-bottom:1px solid #3A060D">'
+    '<div style="font-family:\'Roboto Mono\',monospace;font-size:9px;letter-spacing:0.12em;color:#D1707F">WIDEST NODE GAP · 7 DAYS</div>'
+    '<div style="font-family:\'Roboto Mono\',monospace;font-size:10.5px;color:#D1707F;margin-top:6px;line-height:1.5">'
+    'not available — the gateway keeps about a day of signed packages, and past that there is nothing left to measure a gap from. '
+    'The seven-day line above is a plain price series with no signatures attached.</div>'
+    '</div>'
+    # The number is only interesting if you know what it means. Said in terms of
+    # what actually happened, not as a claim about the company.
+    '<div style="padding:12px 13px">'
+    '<div style="font-family:\'Roboto Mono\',monospace;font-size:9px;letter-spacing:0.12em;color:#D1707F">WHY A SMALL NUMBER IS THE POINT</div>'
+    '<div style="font-size:13px;color:#EBB3B9;margin-top:7px;line-height:1.62;max-width:74ch">'
+    'A gap near zero means five machines, run separately and polling different exchanges, '
+    'independently arrived at the same price — and each signed it with a key nobody else holds. '
+    'Nothing forced them to agree. That is what RedStone is actually selling, and on this page '
+    'you are measuring it rather than taking anyone’s word for it.</div>'
+    '</div>'
+    '</div>'
 )
 
 sub(
@@ -464,6 +586,32 @@ sub(
     "    return n ? n + ' \\u2713' : 'not in registry';\n"
     "  }",
     'nameFor: no false accusation',
+)
+
+# "MEDIAN OF 5 SIGNERS" names the statistic and not the thing. The number is the
+# price — the middle one of five independently signed values — and that is what a
+# contract is handed.
+sub(
+    '<div style="font-family:\'Roboto Mono\',monospace;font-size:10px;letter-spacing:0.12em;color:#D1707F;margin-bottom:8px">MEDIAN OF 5 SIGNERS</div>',
+    '<div style="font-family:\'Roboto Mono\',monospace;font-size:10px;letter-spacing:0.12em;color:#D1707F;margin-bottom:8px">MIDDLE OF 5 SIGNED PRICES</div>',
+    'clearer median label',
+)
+
+# A measurement belongs to one feed; switching feeds must not leave the last
+# feed's number sitting under the new one's name.
+sub(
+    "    this.setLabels();\n"
+    "    this.paintSigners();\n"
+    "    this.drawBig();\n"
+    "    this.build3d();\n"
+    "    this.loadHistory([sym]).then(() => {",
+    "    this.setLabels();\n"
+    "    this.paintSigners();\n"
+    "    this.paintScan();\n"
+    "    this.drawBig();\n"
+    "    this.build3d();\n"
+    "    this.loadHistory([sym]).then(() => {",
+    'select: repaint the measurement',
 )
 
 # ------------------------------------------------------------------- write
