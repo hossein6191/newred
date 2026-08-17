@@ -588,6 +588,24 @@ sub(
     'nameFor: no false accusation',
 )
 
+# The hero panel is titled with whatever feed is selected, but its numbers were
+# pinned to ETH — so choosing BTC put ETH's price and ETH's spread under a
+# heading that said BTC / USD.
+sub(
+    "    const eth = this.live.ETH;\n"
+    "    if(eth){\n"
+    "      const hp = document.getElementById('pop-hero-price');\n"
+    "      if(hp){\n"
+    "        const before = prev.ETH && prev.ETH.med;",
+    "    const heroSym = this.selected;\n"
+    "    const eth = this.live[heroSym] || this.packRows(heroSym);\n"
+    "    if(eth){\n"
+    "      const hp = document.getElementById('pop-hero-price');\n"
+    "      if(hp){\n"
+    "        const before = prev[heroSym] && prev[heroSym].med;",
+    'hero follows the selected feed',
+)
+
 # "MEDIAN OF 5 SIGNERS" names the statistic and not the thing. The number is the
 # price — the middle one of five independently signed values — and that is what a
 # contract is handed.
