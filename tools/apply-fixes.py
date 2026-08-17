@@ -257,12 +257,10 @@ sub(
     "    const sym = this.selected;\n"
     "    const hours = this.range === '24H' ? 24 : 24*7;\n"
     "    const tag = this.range === '24H' ? '24H' : '7D';\n"
-    "    /* Both labels carry the window. Four numbers in a row that quietly meant\n"
-    "       different periods was the thing that read as wrong. */\n"
+    "    /* The label carries the window, so the strip cannot be read as some\n"
+    "       other period than the chart under it. */\n"
     "    const rl = document.getElementById('pop-stat-range-label');\n"
     "    if(rl) rl.textContent = tag + ' RANGE';\n"
-    "    const gl = document.getElementById('pop-stat-gap-label');\n"
-    "    if(gl) gl.textContent = 'WIDEST GAP · ' + tag;\n"
     "    const st = rangeStats(this.hist[sym], hours);\n"
     "    const set = (id, text, colour) => {\n"
     "      const el = document.getElementById(id);\n"
@@ -283,23 +281,23 @@ sub(
     "      set('pop-stat-change', '—', '#FFE3E3');\n"
     "    }\n"
     "\n"
-    "    /* Measured over the same window as the three cells to its left, so the\n"
-    "       whole strip describes one period instead of four plus forever. */\n"
-    "    const sp = this.spreadOver(sym, hours);\n"
-    "    if(sp){\n"
-    "      set('pop-stat-gap', sp.max.toFixed(2) + ' bps');\n"
-    "      const span = sp.sinceMs >= 48*3600000\n"
-    "        ? Math.round(sp.sinceMs/86400000) + 'd'\n"
-    "        : sp.sinceMs >= 3600000\n"
-    "          ? Math.round(sp.sinceMs/3600000) + 'h'\n"
-    "          : Math.max(1, Math.round(sp.sinceMs/60000)) + 'm';\n"
-    "      /* \"2h of 24h\" rather than \"2h\": the price range covers the whole window\n"
-    "         because the API serves it, but the gap can only cover the part this\n"
-    "         browser was open for, and the two are easy to confuse otherwise. */\n"
-    "      set('pop-stat-obs', span + ' of ' + tag.toLowerCase() + ' · ' + sp.n + ' signed');\n"
-    "    } else {\n"
-    "      set('pop-stat-gap', '—');\n"
-    "      set('pop-stat-obs', 'watching…');\n"
+    "    /* The widest gap goes under the live spread rather than in the strip.\n"
+    "       It cannot follow the tabs honestly: the range is fetched for the whole\n"
+    "       window, while the gap only exists for the hours this browser watched,\n"
+    "       so pinning it to 24H or 7D produced two labels and one number. */\n"
+    "    const sp = this.spreadOver(sym, SPREAD_KEEP_H);\n"
+    "    const gapEl = document.getElementById('pop-hero-gap');\n"
+    "    if(gapEl){\n"
+    "      if(sp && sp.n > 1){\n"
+    "        const span = sp.sinceMs >= 48*3600000\n"
+    "          ? Math.round(sp.sinceMs/86400000) + 'd'\n"
+    "          : sp.sinceMs >= 3600000\n"
+    "            ? Math.round(sp.sinceMs/3600000) + 'h'\n"
+    "            : Math.max(1, Math.round(sp.sinceMs/60000)) + 'm';\n"
+    "        gapEl.textContent = 'WIDEST ' + sp.max.toFixed(2) + ' bps · ' + sp.n + ' READINGS OVER ' + span;\n"
+    "      } else {\n"
+    "        gapEl.textContent = 'WIDEST — · WATCHING';\n"
+    "      }\n"
     "    }\n"
     "  }",
     'setLabels + paintStats',
@@ -354,30 +352,26 @@ sub(
 
 # ------------------------------------------------------------------ markup
 
+# Three cells, not five. The node gap belongs beside the live price, not here:
+# it is measured by watching, while these three are fetched for the whole
+# window, and a row that mixes the two reads as broken when they disagree.
+#
+# minmax(0,...) rather than a pixel minimum — a grid track will not shrink below
+# its content otherwise, which is what pushed this strip outside its own panel.
 STATS_HTML = (
-    # The range cell holds two full prices and needs about twice the room of a
-    # percentage; giving every cell the same minimum truncated it to "1,859.97 – 1…".
-    '<div id="pop-stats" style="display:grid;grid-template-columns:minmax(178px,1.6fr) repeat(4,minmax(104px,1fr));'
+    '<div id="pop-stats" style="display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr) minmax(0,1fr);'
     'gap:1px;background:#4C0912;margin:0 clamp(16px,2vw,26px) 16px;border:1px solid #4C0912">'
-    '<div style="background:#290004;padding:11px 13px">'
-    '<div id="pop-stat-range-label" style="font-family:\'Roboto Mono\',monospace;font-size:9px;letter-spacing:0.12em;color:#D1707F;white-space:nowrap">RANGE</div>'
-    '<div id="pop-stat-range" style="font-family:\'Roboto Mono\',monospace;font-size:12px;color:#FFE3E3;margin-top:6px;font-variant-numeric:tabular-nums;white-space:nowrap">—</div>'
+    '<div style="background:#290004;padding:11px 13px;min-width:0">'
+    '<div id="pop-stat-range-label" style="font-family:\'Roboto Mono\',monospace;font-size:9px;letter-spacing:0.12em;color:#D1707F;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">RANGE</div>'
+    '<div id="pop-stat-range" style="font-family:\'Roboto Mono\',monospace;font-size:clamp(10px,1.05vw,12px);color:#FFE3E3;margin-top:6px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">—</div>'
     '</div>'
-    '<div style="background:#290004;padding:11px 13px">'
-    '<div style="font-family:\'Roboto Mono\',monospace;font-size:9px;letter-spacing:0.12em;color:#D1707F;white-space:nowrap">HIGH TO LOW</div>'
-    '<div id="pop-stat-width" style="font-family:\'Roboto Mono\',monospace;font-size:12px;color:#FFE3E3;margin-top:6px;font-variant-numeric:tabular-nums">—</div>'
+    '<div style="background:#290004;padding:11px 13px;min-width:0">'
+    '<div style="font-family:\'Roboto Mono\',monospace;font-size:9px;letter-spacing:0.12em;color:#D1707F;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">HIGH TO LOW</div>'
+    '<div id="pop-stat-width" style="font-family:\'Roboto Mono\',monospace;font-size:clamp(10px,1.05vw,12px);color:#FFE3E3;margin-top:6px;font-variant-numeric:tabular-nums">—</div>'
     '</div>'
-    '<div style="background:#290004;padding:11px 13px">'
-    '<div style="font-family:\'Roboto Mono\',monospace;font-size:9px;letter-spacing:0.12em;color:#D1707F;white-space:nowrap">CHANGE</div>'
-    '<div id="pop-stat-change" style="font-family:\'Roboto Mono\',monospace;font-size:12px;color:#FFE3E3;margin-top:6px;font-variant-numeric:tabular-nums">—</div>'
-    '</div>'
-    '<div style="background:#290004;padding:11px 13px">'
-    '<div id="pop-stat-gap-label" style="font-family:\'Roboto Mono\',monospace;font-size:9px;letter-spacing:0.12em;color:#D1707F;white-space:nowrap">WIDEST NODE GAP</div>'
-    '<div id="pop-stat-gap" style="font-family:\'Roboto Mono\',monospace;font-size:12px;color:#FFE3E3;margin-top:6px;font-variant-numeric:tabular-nums">—</div>'
-    '</div>'
-    '<div style="background:#290004;padding:11px 13px">'
-    '<div style="font-family:\'Roboto Mono\',monospace;font-size:9px;letter-spacing:0.12em;color:#D1707F;white-space:nowrap">GAP MEASURED OVER</div>'
-    '<div id="pop-stat-obs" style="font-family:\'Roboto Mono\',monospace;font-size:12px;color:#FFE3E3;margin-top:6px;font-variant-numeric:tabular-nums">—</div>'
+    '<div style="background:#290004;padding:11px 13px;min-width:0">'
+    '<div style="font-family:\'Roboto Mono\',monospace;font-size:9px;letter-spacing:0.12em;color:#D1707F;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">CHANGE</div>'
+    '<div id="pop-stat-change" style="font-family:\'Roboto Mono\',monospace;font-size:clamp(10px,1.05vw,12px);color:#FFE3E3;margin-top:6px;font-variant-numeric:tabular-nums">—</div>'
     '</div>'
     '</div>'
 )
@@ -386,6 +380,14 @@ sub(
     '<canvas id="pop-bigchart"',
     STATS_HTML + '<canvas id="pop-bigchart"',
     'stats strip markup',
+)
+
+# The widest gap seen, directly under the live spread it is the running maximum of.
+sub(
+    '<div id="pop-hero-spread" style="font-family:\'Roboto Mono\',monospace;font-size:clamp(22px,2.4vw,30px);font-weight:500;color:#EBB3B9;font-variant-numeric:tabular-nums">—</div>',
+    '<div id="pop-hero-spread" style="font-family:\'Roboto Mono\',monospace;font-size:clamp(22px,2.4vw,30px);font-weight:500;color:#EBB3B9;font-variant-numeric:tabular-nums">—</div>'
+    '<div id="pop-hero-gap" style="font-family:\'Roboto Mono\',monospace;font-size:9.5px;letter-spacing:0.08em;color:#D1707F;margin-top:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">WIDEST — · WATCHING</div>',
+    'widest-gap line under live spread',
 )
 
 # --------------------------------------------------- registry: source + cache
